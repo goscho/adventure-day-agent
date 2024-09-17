@@ -80,15 +80,40 @@ async def ask_question(ask: Ask):
     """
 
     start_phrase =  ask.question
-    response: openai.types.chat.chat_completion.ChatCompletion = None
+    # create a vectorized query based on the question
+    vector = VectorizedQuery(vector=get_embedding(start_phrase), k_nearest_neighbors=5, fields="vector")
 
-    #####\n",
-    # implement rag flow here\n",
-    ######\n",
 
+    # create search client to retrieve movies from the vector store
+    found_docs = list(search_client.search(
+        search_text=None,
+        query_type="semantic",
+        semantic_configuration_name="movies-semantic-config",
+        vector_queries=[vector],
+        select=["title", "genre", "plot", "year"],
+        top=5
+    ))
+
+    found_docs_as_text = " "
+    # print the found documents and the field that were selected
+    for doc in found_docs:
+        found_docs_as_text += " "+ "Movie Title: {}".format(doc["title"]) +" "+ "Release Year: {}".format(doc["year"]) + " "+ "Movie Plot: {}".format(doc["plot"])
+        
+    # augment the question with the found documents and ask the LLM to generate a response
+    system_prompt = "Here is what you need to do:"
+
+    parameters = [system_prompt, ' Context:', found_docs_as_text , ' Question:', start_phrase]
+    joined_parameters = ''.join(parameters)
+
+    response = client.chat.completions.create(
+            model = deployment_name,
+            messages = [{"role" : "assistant", "content" : joined_parameters},
+                        {"role" : "system", "content" : "provide numeric result, no bs"}],
+        )
+   
     answer = Answer(answer=response.choices[0].message.content)
     answer.correlationToken = ask.correlationToken
     answer.promptTokensUsed = response.usage.prompt_tokens
     answer.completionTokensUsed = response.usage.completion_tokens
-
-    return answer
+    
+    return answer.answer
