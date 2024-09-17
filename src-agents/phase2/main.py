@@ -105,6 +105,7 @@ async def ask_question(ask: Ask):
     parameters = [system_prompt, ' Context:', found_docs_as_text , ' Question:', start_phrase]
     joined_parameters = ''.join(parameters)
 
+    
     response = client.chat.completions.create(
             model = deployment_name,
             messages = [{"role" : "assistant", "content" : joined_parameters},

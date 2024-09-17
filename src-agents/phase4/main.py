@@ -8,6 +8,80 @@ from enum import Enum
 from openai import AzureOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 import redis
+from azure.identity import DefaultAzureCredential
+from azure.core.credentials import AzureKeyCredential
+
+from azure.search.documents.indexes import SearchIndexClient
+from azure.search.documents.indexes.models import (
+    SimpleField,
+    SearchFieldDataType,
+    SearchableField,
+    SearchField,
+    VectorSearch,
+    HnswAlgorithmConfiguration,
+    VectorSearchProfile,
+    SemanticConfiguration,
+    SemanticPrioritizedFields,
+    SemanticField,
+    SemanticSearch,
+    SearchIndex
+)
+from azure.search.documents.models import (
+    VectorizedQuery
+)
+
+credential = AzureKeyCredential(os.environ["AZURE_AI_SEARCH_KEY"]) if len(os.environ["AZURE_AI_SEARCH_KEY"]) > 0 else DefaultAzureCredential()
+
+index_name = "question-semantic-index"
+
+index_client = SearchIndexClient(
+    endpoint=os.environ["AZURE_AI_SEARCH_ENDPOINT"], 
+    credential=credential
+)
+
+# Create a search index with the fields and a vector field which we will fill with a vector based on the overview field
+fields = [
+    SimpleField(name="id", type=SearchFieldDataType.String, key=True, sortable=True, filterable=True, facetable=True),
+    SearchableField(name="question", type=SearchFieldDataType.String),
+    SearchableField(name="answer", type=SearchFieldDataType.String),
+    SearchField(name="vector", type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
+                searchable=True, vector_search_dimensions=1536, vector_search_profile_name="myHnswProfile"),
+]
+
+# Configure the vector search configuration  
+vector_search = VectorSearch(
+    algorithms=[
+        HnswAlgorithmConfiguration(
+            name="myHnsw"
+        )
+    ],
+    profiles=[
+        VectorSearchProfile(
+            name="myHnswProfile",
+            algorithm_configuration_name="myHnsw",
+        )
+    ]
+)
+
+# Configure the semantic search configuration 
+semantic_config = SemanticConfiguration(
+    name="question-semantic-config",
+    prioritized_fields=SemanticPrioritizedFields(
+        title_field=SemanticField(field_name="question"),
+        keywords_fields=[SemanticField(field_name="answer")],
+        content_fields=[SemanticField(field_name="question")]
+    )
+)
+
+# Create the semantic settings with the configuration
+semantic_search = SemanticSearch(configurations=[semantic_config])
+
+# Create the search index with the semantic settings
+index = SearchIndex(name=index_name, fields=fields,
+                    vector_search=vector_search, semantic_search=semantic_search)
+result = index_client.create_or_update_index(index)
+print(f' {result.name} created')
+
 
 app = FastAPI()
 
@@ -62,6 +136,11 @@ conn = redis.Redis(host=redis_host, port=redis_port, password=redis_password, en
 if conn.ping():
     print("Connected to Redis")
 
+
+# use an embeddingsmodel to create embeddings
+def get_embedding(text, model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL")):
+    return client.embeddings.create(input = [text], model=model).data[0].embedding
+
 @app.get("/")
 async def root():
     return {"message": "Hello Smorgs"}
@@ -78,6 +157,20 @@ async def ask_question(ask: Ask):
     #####\n",
     # implement cached rag flow here\n",
     ######\n",
+
+    # create a vectorized query based on the question
+    vector = VectorizedQuery(vector=get_embedding(question), k_nearest_neighbors=5, fields="vector")
+
+    # create search client to retrieve movies from the vector store
+    found_questions = list(search_client.search(
+        search_text=None,
+        query_type="semantic",
+        semantic_configuration_name="question-semantic-config",
+        vector_queries=[vector],
+        select=["question", "answer"],
+        top=5
+    ))
+
     
     answer = Answer(answer=response.choices[0].message.content)
     answer.correlationToken = ask.correlationToken

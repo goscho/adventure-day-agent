@@ -269,4 +269,6 @@ async def ask_question(ask: Ask):
             
             print("second_response", second_response.choices[0].message.content)
             
-            return second_response.choices[0].message.content
+            second_response.choices[0].message.content
+
+            return Answer(second_response.choices[0].message.content, ask.correlationToken)
