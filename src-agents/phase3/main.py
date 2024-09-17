@@ -267,6 +267,6 @@ async def ask_question(ask: Ask):
                 model = deployment_name,
                 messages = messages)  # get a new response from the model where it can see the function response
             
-            print("second_response")
+            print("second_response", second_response.choices[0].message.content)
             
             return second_response.choices[0].message.content
